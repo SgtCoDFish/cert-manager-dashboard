@@ -13,15 +13,15 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/SgtCoDFish/cert-manager-dashboard/pkg/github"
 	"github.com/SgtCoDFish/cert-manager-dashboard/pkg/logging"
 
-	"github.com/google/go-github/v71/github"
+	githubsdk "github.com/google/go-github/v71/github"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -34,48 +34,22 @@ const (
 	ntfyTopic = "cert-manager-warnings"
 )
 
-type repoConfigurer func(*targetRepo)
-
-func WithHasReleases(hasReleases bool) repoConfigurer {
-	return func(t *targetRepo) {
-		t.HasReleases = hasReleases
-	}
-}
-
-func WithVersionFilter(versionFilter string) repoConfigurer {
-	return func(t *targetRepo) {
-		t.VersionFilter = versionFilter
-	}
-}
-
-func WithFriendlyName(name string) repoConfigurer {
-	return func(t *targetRepo) {
-		t.FriendlyName = name
-	}
-}
-
-func WithHasGovulncheck(hasGovulncheck bool) repoConfigurer {
-	return func(t *targetRepo) {
-		t.HasGovulncheck = hasGovulncheck
-	}
-}
-
 var (
 	// targetList is the list of repos we want to check
-	targetList = []*targetRepo{
-		TargetRepo("cert-manager", "cert-manager", WithFriendlyName("master"), WithHasReleases(false)),
-		TargetRepo("cert-manager", "cert-manager", WithVersionFilter(`v1\.18\.[0-9]+`), WithFriendlyName("release-1.18"), WithHasGovulncheck(false)),
-		TargetRepo("cert-manager", "cert-manager", WithVersionFilter(`v1\.17\.[0-9]+`), WithFriendlyName("release-1.17"), WithHasGovulncheck(false)),
-		TargetRepo("cert-manager", "trust-manager"),
-		TargetRepo("cert-manager", "approver-policy"),
-		TargetRepo("cert-manager", "csi-driver"),
-		TargetRepo("cert-manager", "csi-driver-spiffe"),
-		TargetRepo("cert-manager", "istio-csr"),
-		TargetRepo("cert-manager", "cmctl"),
-		TargetRepo("cert-manager", "google-cas-issuer"),
-		TargetRepo("cert-manager", "openshift-routes"),
-		TargetRepo("cert-manager", "issuer-lib", WithHasReleases(false)),
-		TargetRepo("cert-manager", "csi-lib", WithHasReleases(false)),
+	targetList = []*github.GitHubRepo{
+		github.NewGitHubRepo("cert-manager", "cert-manager", github.WithFriendlyName("master"), github.WithHasReleases(false)),
+		github.NewGitHubRepo("cert-manager", "cert-manager", github.WithVersionFilter(`v1\.18\.[0-9]+`), github.WithFriendlyName("release-1.18"), github.WithHasGovulncheck(false)),
+		github.NewGitHubRepo("cert-manager", "cert-manager", github.WithVersionFilter(`v1\.17\.[0-9]+`), github.WithFriendlyName("release-1.17"), github.WithHasGovulncheck(false)),
+		github.NewGitHubRepo("cert-manager", "trust-manager"),
+		github.NewGitHubRepo("cert-manager", "approver-policy"),
+		github.NewGitHubRepo("cert-manager", "csi-driver"),
+		github.NewGitHubRepo("cert-manager", "csi-driver-spiffe"),
+		github.NewGitHubRepo("cert-manager", "istio-csr"),
+		github.NewGitHubRepo("cert-manager", "cmctl"),
+		github.NewGitHubRepo("cert-manager", "google-cas-issuer"),
+		github.NewGitHubRepo("cert-manager", "openshift-routes"),
+		github.NewGitHubRepo("cert-manager", "issuer-lib", github.WithHasReleases(false)),
+		github.NewGitHubRepo("cert-manager", "csi-lib", github.WithHasReleases(false)),
 	}
 
 	//go:embed templates/index.html
@@ -91,161 +65,7 @@ var (
 	bootstrapV341CSSData []byte
 
 	lastNtfy string
-
-	lastRunTmpl = template.Must(template.New("lastRunTmpl").Parse(`<a href="{{ .LastRun.GetHTMLURL }}" title="Latest run of govulncheck for {{ .RepoName }}" target="_blank">{{ .LastRun.GetHeadBranch }}</a>`))
-
-	latestReleaseTmpl = template.Must(template.New("latestReleaseTmpl").Parse(`<a href="{{ .LastRelease.GetHTMLURL }}" title="Latest release for {{ .RepoName }}" target="_blank">{{ .LastRelease.GetTagName }}</a>`))
 )
-
-type targetRepo struct {
-	OrgName  string
-	RepoName string
-
-	FriendlyName string
-
-	HasGovulncheck bool
-	HasReleases    bool
-
-	GovulncheckWorkflowName string
-
-	LastRun *github.WorkflowRun
-
-	LastRelease *github.RepositoryRelease
-
-	VersionFilter string
-}
-
-func (tr *targetRepo) String() string {
-	suffix := ""
-
-	if tr.FriendlyName != "" {
-		suffix = fmt.Sprintf(" (%s)", tr.FriendlyName)
-	}
-
-	return fmt.Sprintf("%s/%s%s", tr.OrgName, tr.RepoName, suffix)
-}
-
-func (tr *targetRepo) BootstrapClass() string {
-	cls, _ := tr.warnings()
-	return cls
-}
-
-func (tr *targetRepo) WarningMessage() string {
-	_, wrn := tr.warnings()
-	return wrn
-}
-
-func (tr *targetRepo) LastTag() string {
-	if !tr.HasReleases || tr.LastRelease == nil {
-		return "N/A"
-	}
-
-	return tr.LastRelease.GetTagName()
-}
-
-func (tr *targetRepo) LastReleaseTime() string {
-	if !tr.HasReleases || tr.LastRelease == nil {
-		return "N/A"
-	}
-
-	return tr.LastRelease.GetCreatedAt().Time.UTC().Format(time.DateOnly)
-}
-
-func (tr *targetRepo) LastGovulncheckTime() string {
-	if !tr.HasGovulncheck || tr.LastRun == nil {
-		return "N/A"
-	}
-
-	return tr.LastRun.GetCreatedAt().Time.UTC().Format(time.DateTime)
-}
-
-func (tr *targetRepo) GovulncheckHead() template.HTML {
-	if !tr.HasGovulncheck {
-		return "N/A"
-	}
-
-	if tr.LastRun == nil {
-		return "No runs found"
-	}
-
-	buf := &bytes.Buffer{}
-
-	err := lastRunTmpl.Execute(buf, tr)
-	if err != nil {
-		return "Failed to render template"
-	}
-
-	// NB: template.HTML can be dangerous, but this is safe since this is output from "template/html.Template.Execute"
-	return template.HTML(buf.String())
-}
-
-func (tr *targetRepo) LatestReleaseLink() template.HTML {
-	if !tr.HasReleases {
-		return "N/A"
-	}
-
-	if tr.LastRelease == nil {
-		return "No release found"
-	}
-
-	buf := &bytes.Buffer{}
-
-	err := latestReleaseTmpl.Execute(buf, tr)
-	if err != nil {
-		return "Failed to render template"
-	}
-
-	// NB: template.HTML can be dangerous, but this is safe since this is output from "template/html.Template.Execute"
-	return template.HTML(buf.String())
-}
-
-// warnings returns a bootstrap class[1] and a reason if there are any
-// warnings which should be shown for this repo. Can return empty strings
-// if no warnings are needed.
-// [1] https://getbootstrap.com/docs/3.4/css/#tables-contextual-classes
-func (tr *targetRepo) warnings() (string, string) {
-	if tr.HasGovulncheck {
-		if tr.LastRun == nil {
-			return "danger", "no data for last govulncheck run"
-		} else if tr.LastRun.GetConclusion() != "success" {
-			return "danger", "last govulncheck run not successful"
-		} else if time.Since(tr.LastRun.GetCreatedAt().Time).Hours() > twoDays {
-			return "danger", "govulncheck stale for more than two days"
-		}
-	}
-
-	if tr.HasReleases {
-		if tr.LastRelease == nil {
-			return "danger", "no data for last release"
-		}
-
-		if time.Since(tr.LastRelease.GetCreatedAt().Time).Hours() > 2*thirtyDays {
-			return "danger", "last release more than sixty days old"
-		} else if time.Since(tr.LastRelease.GetCreatedAt().Time).Hours() > thirtyDays {
-			return "warning", "last release more than thirty days old"
-		}
-	}
-
-	return "", ""
-}
-
-func TargetRepo(org string, name string, configurers ...repoConfigurer) *targetRepo {
-	t := &targetRepo{
-		OrgName:  org,
-		RepoName: name,
-
-		HasGovulncheck: true,
-		HasReleases:    true,
-
-		GovulncheckWorkflowName: "govulncheck.yaml",
-	}
-
-	for _, c := range configurers {
-		c(t)
-	}
-
-	return t
-}
 
 type DashboardHandler struct {
 	indexTemplate *template.Template
@@ -280,13 +100,13 @@ func (dh *DashboardHandler) Update(ctx context.Context) error {
 
 	data := struct {
 		LastUpdated string
-		Repos       []*targetRepo
+		Repos       []*github.GitHubRepo
 	}{
 		LastUpdated: time.Now().UTC().Format(time.DateTime),
 		Repos:       targetList,
 	}
 
-	slices.SortFunc(data.Repos, func(a, b *targetRepo) int {
+	slices.SortFunc(data.Repos, func(a, b *github.GitHubRepo) int {
 		if !a.HasReleases && !b.HasReleases {
 			return 0
 		}
@@ -310,7 +130,7 @@ func (dh *DashboardHandler) Update(ctx context.Context) error {
 	var warnings []string
 
 	for _, repo := range targetList {
-		_, warningMessage := repo.warnings()
+		_, warningMessage := repo.BootstrapWarnings()
 
 		if warningMessage != "" {
 			warnings = append(warnings, fmt.Sprintf("%s: %s", repo.RepoName, warningMessage))
@@ -351,125 +171,35 @@ func (dh *DashboardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(dh.indexData)
 }
 
-func lastWeek() string {
-	t := time.Now().Add(-1 * time.Hour * 24 * 7)
+type repoFunc func(*github.GitHubRepo, context.Context, *githubsdk.Client) error
 
-	return ">" + t.Format(time.DateOnly)
-
-}
-
-type repoFunc func(context.Context, *github.Client, *targetRepo) error
-
-func forEachRepo(ctx context.Context, client *github.Client, f repoFunc) error {
+func forEachRepo(ctx context.Context, client *githubsdk.Client, f repoFunc) error {
 	wg, ctx := errgroup.WithContext(ctx)
 
 	for _, repo := range targetList {
 		wg.Go(func() error {
-			return f(ctx, client, repo)
+			return f(repo, ctx, client)
 		})
 	}
 
 	return wg.Wait()
 }
 
-func getLatestRunResult(ctx context.Context, client *github.Client, repo *targetRepo) error {
-	if !repo.HasGovulncheck {
-		return nil
-	}
-
-	listOpts := &github.ListWorkflowRunsOptions{
-		Created: lastWeek(),
-		ListOptions: github.ListOptions{
-			PerPage: 25,
-		},
-	}
-
-	runs, _, err := client.Actions.ListWorkflowRunsByFileName(ctx, repo.OrgName, repo.RepoName, repo.GovulncheckWorkflowName, listOpts)
-	if err != nil {
-		return err
-	}
-
-	for _, run := range runs.WorkflowRuns {
-		if run.GetStatus() != "completed" {
-			continue
-		}
-
-		repo.LastRun = run
-		break
-	}
-
-	return nil
-}
-
-func getLatestRelease(ctx context.Context, client *github.Client, repo *targetRepo) error {
-	if !repo.HasReleases {
-		return nil
-	}
-
-	listOpts := &github.ListOptions{
-		PerPage: 25,
-	}
-
-	releases, _, err := client.Repositories.ListReleases(ctx, repo.OrgName, repo.RepoName, listOpts)
-	if err != nil {
-		return err
-	}
-
-	if len(releases) == 0 {
-		return fmt.Errorf("no releases found for %s/%s", repo.OrgName, repo.RepoName)
-	}
-
-	// set the first release in the GitHub response as the last release;
-	// we might change this if there's a version filter set but at least this will return something sensible
-	// if the version filter doesn't match anything
-	repo.LastRelease = releases[0]
-
-	if repo.VersionFilter == "" {
-		// just use the first release and return
-		return nil
-	}
-
-	foundMatch := false
-	logger := logging.FromContext(ctx).With("repo", fmt.Sprintf("%s/%s", repo.OrgName, repo.RepoName), "versionFilter", repo.VersionFilter)
-
-	for _, rel := range releases {
-		tag := rel.GetTagName()
-
-		match, err := regexp.MatchString(repo.VersionFilter, tag)
-		if err != nil {
-			logger.Error("failed to match version filter", "err", err, "tag", tag)
-			continue
-		}
-
-		if match {
-			repo.LastRelease = rel
-			foundMatch = true
-			break
-		}
-	}
-
-	if !foundMatch {
-		logger.Info("didn't find a matching release for version filter, will use latest")
-	}
-
-	return nil
-}
-
-func updateRepos(ctx context.Context, logger *slog.Logger, client *github.Client) error {
+func updateRepos(ctx context.Context, logger *slog.Logger, client *githubsdk.Client) error {
 	wg, ctx := errgroup.WithContext(ctx)
 
 	wg.Go(func() error {
-		return forEachRepo(ctx, client, getLatestRelease)
+		return forEachRepo(ctx, client, (*github.GitHubRepo).GetLatestRelease)
 	})
 
 	wg.Go(func() error {
-		return forEachRepo(ctx, client, getLatestRunResult)
+		return forEachRepo(ctx, client, (*github.GitHubRepo).GetLatestRunResult)
 	})
 
 	return wg.Wait()
 }
 
-func maintainRepos(ctx context.Context, client *github.Client, dh *DashboardHandler) {
+func maintainRepos(ctx context.Context, client *githubsdk.Client, dh *DashboardHandler) {
 	logger := logging.FromContext(ctx).With("source", "repoMaintainer")
 
 	ticker := time.NewTicker(maintainencePeriod)
@@ -585,7 +315,7 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("no GitHub token available")
 	}
 
-	client := github.NewClient(&http.Client{Timeout: 5 * time.Second}).WithAuthToken(config.GitHubToken)
+	client := githubsdk.NewClient(&http.Client{Timeout: 5 * time.Second}).WithAuthToken(config.GitHubToken)
 
 	dashboardHandler, err := NewDashboardHandler()
 	if err != nil {
