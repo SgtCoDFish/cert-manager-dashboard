@@ -15,7 +15,7 @@ fi
 # If we're configuring the .deb file, ensure that we enable the dashboard site configuration for nginx
 case "$1" in
 	configure)
-		site=cert-manager-dashbaord.conf
+		site=cert-manager-dashboard.conf
 		AVAIL="/etc/nginx/sites-available/$site"
 		ENABLED="/etc/nginx/sites-enabled/$site"
 
