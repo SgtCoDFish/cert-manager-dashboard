@@ -28,9 +28,6 @@ import (
 const (
 	maintainencePeriod = 60 * time.Minute
 
-	twoDays    = 2 * 30
-	thirtyDays = 24 * 30
-
 	ntfyTopic = "cert-manager-warnings"
 )
 
@@ -117,7 +114,7 @@ func (dh *DashboardHandler) Update(ctx context.Context) error {
 			return 1
 		}
 
-		return a.LastRelease.GetCreatedAt().Time.Compare(b.LastRelease.GetCreatedAt().Time)
+		return a.LastRelease.GetCreatedAt().Compare(b.LastRelease.GetCreatedAt().Time)
 	})
 
 	err := dh.indexTemplate.Execute(buf, data)
@@ -275,6 +272,7 @@ func addSecurityHeaders(setHSTS bool, underlying http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none';")
+
 		if setHSTS {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
 		}
@@ -293,13 +291,15 @@ func run(ctx context.Context) error {
 		GitHubToken string `json:"githubToken"`
 	}{}
 
-	configData, err := os.ReadFile("/etc/cert-manager-dashboard/config.json")
+	configFile := "/etc/cert-manager-dashboard/config.json"
+
+	configData, err := os.ReadFile(configFile)
 	if err != nil {
 		token := os.Getenv("CERT_MANAGER_DASHBOARD_GITHUB_TOKEN")
 		if token == "" {
 			token := os.Getenv("GITHUB_TOKEN")
 			if token == "" {
-				return fmt.Errorf("no config.json available and no CERT_MANAGER_DASHBOARD_GITHUB_TOKEN/GITHUB_TOKEN found in env")
+				return fmt.Errorf("no %s available and no CERT_MANAGER_DASHBOARD_GITHUB_TOKEN/GITHUB_TOKEN found in env", configFile)
 			}
 		}
 
@@ -307,7 +307,7 @@ func run(ctx context.Context) error {
 	} else {
 		err = json.Unmarshal(configData, &config)
 		if err != nil {
-			return fmt.Errorf("couldn't parse config file: %s", err)
+			return fmt.Errorf("couldn't parse config file %s: %s", configFile, err)
 		}
 	}
 

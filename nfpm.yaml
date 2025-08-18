@@ -1,0 +1,36 @@
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
+
+# This file uses nFPM to create a .deb archive which can be used to install the dashboard on a Debian server
+# This is adapted from a MIT-licensed private repo containing the code for https://sgtcodfish.com
+
+name: "cert-manager-dashboard"
+arch: "amd64"
+platform: "linux"
+version: ${DASHBOARD_VERSION}
+section: "default"
+priority: "extra"
+maintainer: "The cert-manager Maintainers <cert-manager-maintainers+cert-manager-dashboard@googlegroups.com>"
+description: "cert-manager-dashboard.sgtcodfish.com; a security dashboard showing information about cert-manager repos"
+vendor: "cert-manager"
+homepage: "https://cert-manager-dashboard.sgtcodfish.com"
+license: "Apache 2"
+depends:
+- systemd | systemd-standalone-sysusers
+- nginx
+contents:
+- dst: /etc/cert-manager-dashboard
+  type: dir
+  file_info:
+    mode: 0755
+    owner: cert-manager-dashboard
+    group: cert-manager-dashboard
+- src: ./_bin/cert-manager-dashboard-linux-amd64
+  dst: /usr/bin/cert-manager-dashboard
+- src: ./dist/etc/systemd/system/cert-manager-dashboard.service
+  dst: /etc/systemd/system/cert-manager-dashboard.service
+- src: ./dist/usr/lib/sysusers.d/cert-manager-dashboard.conf
+  dst: /usr/lib/sysusers.d/cert-manager-dashboard.conf
+- src: ./dist/etc/nginx/sites-available/cert-manager-dashboard.conf
+  dst: /etc/nginx/sites-available/cert-manager-dashboard.conf
+scripts:
+  postinstall: ./dist/postinstall/postinstall.sh

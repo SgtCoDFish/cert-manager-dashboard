@@ -1,0 +1,20 @@
+[Unit]
+Description=cert-manager Dashboard
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/cert-manager-dashboard
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+User=cert-manager-dashboard
+Group=cert-manager-dashboard
+AmbientCapabilities=
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
