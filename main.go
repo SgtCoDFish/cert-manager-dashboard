@@ -236,30 +236,59 @@ func (dh *DashboardHandler) Update(ctx context.Context) error {
 
 	dh.indexData = buf.Bytes()
 
+	// otherWarnings tracks the number of warnings which are not "danger" level so won't be sent in their entirety to ntfy.sh
+	// but will be summarised instead
+	otherWarnings := 0
 	var warnings []string
 
 	for _, repo := range dh.githubRepos {
-		_, warningMessage := repo.BootstrapWarnings()
+		warningType, warningMessage := repo.BootstrapWarnings()
 
+		// TODO: this is error prone and could be much better handled
 		if warningMessage != "" {
-			warnings = append(warnings, fmt.Sprintf("%s: %s", repo.RepoName, warningMessage))
+			switch warningType {
+			case "danger":
+				warnings = append(warnings, fmt.Sprintf("%s: %s", repo.RepoName, warningMessage))
+
+			default:
+				otherWarnings++
+			}
 		}
 	}
 
-	if len(warnings) > 0 && dh.shouldNtfy {
-		logger := logging.FromContext(ctx)
+	failingTrivyJobCount := 0
+	for _, job := range data.TestGridJobs {
+		if job.Failing() {
+			failingTrivyJobCount++
+		}
+	}
 
+	if failingTrivyJobCount > 0 {
+		warnings = append(warnings, fmt.Sprintf("trivy jobs: %d failing", failingTrivyJobCount))
+	}
+
+	if otherWarnings > 0 {
+		warnings = append(warnings, fmt.Sprintf("other: %d minor warnings", otherWarnings))
+	}
+
+	if len(warnings) > 0 {
+		logger := logging.FromContext(ctx)
 		message := strings.Join(warnings, ", ")
 
-		if message != lastNtfy {
-			err = ntfy(ntfyTopic, message)
-			if err != nil {
-				logger.Error("got an error trying to publish to ntfy.sh", "err", err)
-			}
+		logger.Info("got warnings", "warnings", message, "shouldNtfy", dh.shouldNtfy)
 
-			lastNtfy = message
-		} else {
-			logger.Info("skipping publishing to ntfy.sh as message is unchanged")
+		if dh.shouldNtfy {
+			if message != lastNtfy {
+				err = ntfy(ntfyTopic, message)
+				if err != nil {
+					logger.Error("got an error trying to publish to ntfy.sh", "err", err)
+				}
+
+				logger.Info("published to ntfy.sh")
+				lastNtfy = message
+			} else {
+				logger.Info("skipping publishing to ntfy.sh as message is unchanged")
+			}
 		}
 	}
 

@@ -16,6 +16,10 @@ type Job struct {
 	URL            string
 }
 
+func (j Job) Failing() bool {
+	return j.Status != string(k8stestgrid.Passing)
+}
+
 type Dashboard struct {
 	Name string
 
