@@ -20,6 +20,7 @@ import (
 
 	"github.com/SgtCoDFish/cert-manager-dashboard/pkg/github"
 	"github.com/SgtCoDFish/cert-manager-dashboard/pkg/logging"
+	"github.com/SgtCoDFish/cert-manager-dashboard/pkg/testgrid"
 
 	githubsdk "github.com/google/go-github/v71/github"
 	"golang.org/x/sync/errgroup"
@@ -32,22 +33,6 @@ const (
 )
 
 var (
-	// targetList is the list of repos we want to check
-	targetList = []*github.GitHubRepo{
-		github.NewGitHubRepo("cert-manager", "cert-manager", github.WithFriendlyName("master"), github.WithHasReleases(false)),
-		github.NewGitHubRepo("cert-manager", "cert-manager", github.WithVersionFilter(`v1\.18\.[0-9]+`), github.WithFriendlyName("release-1.18"), github.WithHasGovulncheck(false)),
-		github.NewGitHubRepo("cert-manager", "cert-manager", github.WithVersionFilter(`v1\.17\.[0-9]+`), github.WithFriendlyName("release-1.17"), github.WithHasGovulncheck(false)),
-		github.NewGitHubRepo("cert-manager", "trust-manager"),
-		github.NewGitHubRepo("cert-manager", "approver-policy"),
-		github.NewGitHubRepo("cert-manager", "csi-driver"),
-		github.NewGitHubRepo("cert-manager", "csi-driver-spiffe"),
-		github.NewGitHubRepo("cert-manager", "istio-csr"),
-		github.NewGitHubRepo("cert-manager", "cmctl"),
-		github.NewGitHubRepo("cert-manager", "google-cas-issuer"),
-		github.NewGitHubRepo("cert-manager", "openshift-routes"),
-		github.NewGitHubRepo("cert-manager", "issuer-lib", github.WithHasReleases(false)),
-		github.NewGitHubRepo("cert-manager", "csi-lib", github.WithHasReleases(false)),
-	}
 
 	//go:embed templates/index.html
 	indexTemplateRaw string
@@ -64,14 +49,35 @@ var (
 	lastNtfy string
 )
 
+type Config struct {
+	GitHubToken string `json:"githubToken"`
+
+	ShouldNtfy bool `json:"shouldNtfy"`
+}
+
 type DashboardHandler struct {
 	indexTemplate *template.Template
 
 	indexData     []byte
 	indexDataLock sync.RWMutex
+
+	githubClient *githubsdk.Client
+	githubRepos  []*github.GitHubRepo
+
+	testgridDashboards []*testgrid.Dashboard
+
+	shouldNtfy bool
 }
 
-func NewDashboardHandler() (*DashboardHandler, error) {
+func NewDashboardHandler(config *Config) (*DashboardHandler, error) {
+	if config == nil {
+		return nil, fmt.Errorf("fatal: no config provided")
+	}
+
+	if config.GitHubToken == "" {
+		return nil, fmt.Errorf("fatal: no GitHub token provided")
+	}
+
 	tmpl := template.New("index.html")
 	tmpl = tmpl.Option("missingkey=error")
 
@@ -81,27 +87,133 @@ func NewDashboardHandler() (*DashboardHandler, error) {
 		return nil, err
 	}
 
+	repos := []*github.GitHubRepo{
+		github.NewGitHubRepo("cert-manager", "cert-manager", github.WithFriendlyName("master"), github.WithHasReleases(false)),
+		github.NewGitHubRepo("cert-manager", "cert-manager", github.WithFriendlyName("release-1.18"), github.WithVersionFilter(`v1\.18\.[0-9]+`), github.WithHasGovulncheck(false)),
+		github.NewGitHubRepo("cert-manager", "cert-manager", github.WithFriendlyName("release-1.17"), github.WithVersionFilter(`v1\.17\.[0-9]+`), github.WithHasGovulncheck(false)),
+		github.NewGitHubRepo("cert-manager", "trust-manager"),
+		github.NewGitHubRepo("cert-manager", "approver-policy"),
+		github.NewGitHubRepo("cert-manager", "csi-driver"),
+		github.NewGitHubRepo("cert-manager", "csi-driver-spiffe"),
+		github.NewGitHubRepo("cert-manager", "istio-csr"),
+		github.NewGitHubRepo("cert-manager", "cmctl"),
+		github.NewGitHubRepo("cert-manager", "google-cas-issuer"),
+		github.NewGitHubRepo("cert-manager", "openshift-routes"),
+		github.NewGitHubRepo("cert-manager", "issuer-lib", github.WithHasReleases(false)),
+		github.NewGitHubRepo("cert-manager", "csi-lib", github.WithHasReleases(false)),
+	}
+
+	testgridDashboards := []*testgrid.Dashboard{
+		testgrid.New("cert-manager-periodics-master", []string{
+			"ci-cert-manager-master-trivy-test-acmesolver",
+			"ci-cert-manager-master-trivy-test-cainjector",
+			"ci-cert-manager-master-trivy-test-controller",
+			"ci-cert-manager-master-trivy-test-startupapicheck",
+			"ci-cert-manager-master-trivy-test-webhook",
+		}),
+		testgrid.New("cert-manager-periodics-release-1.17", []string{
+			"ci-cert-manager-release-1.17-trivy-test-acmesolver",
+			"ci-cert-manager-release-1.17-trivy-test-cainjector",
+			"ci-cert-manager-release-1.17-trivy-test-controller",
+			"ci-cert-manager-release-1.17-trivy-test-startupapicheck",
+			"ci-cert-manager-release-1.17-trivy-test-webhook",
+		}),
+		testgrid.New("cert-manager-periodics-release-1.18", []string{
+			"ci-cert-manager-release-1.18-trivy-test-acmesolver",
+			"ci-cert-manager-release-1.18-trivy-test-cainjector",
+			"ci-cert-manager-release-1.18-trivy-test-controller",
+			"ci-cert-manager-release-1.18-trivy-test-startupapicheck",
+			"ci-cert-manager-release-1.18-trivy-test-webhook",
+		}),
+	}
+
 	return &DashboardHandler{
 		indexTemplate: tmpl,
 
 		indexData:     []byte{},
 		indexDataLock: sync.RWMutex{},
+
+		githubClient: githubsdk.NewClient(&http.Client{Timeout: 5 * time.Second}).WithAuthToken(config.GitHubToken),
+		githubRepos:  repos,
+
+		testgridDashboards: testgridDashboards,
+
+		shouldNtfy: config.ShouldNtfy,
 	}, nil
 }
 
+func (dh *DashboardHandler) fetchData(ctx context.Context) error {
+	wg, ctx := errgroup.WithContext(ctx)
+
+	for _, repo := range dh.githubRepos {
+		wg.Go(func() error { return repo.GetLatestRelease(ctx, dh.githubClient) })
+		wg.Go(func() error { return repo.GetLatestRunResult(ctx, dh.githubClient) })
+	}
+
+	for _, dashboard := range dh.testgridDashboards {
+		wg.Go(func() error { return dashboard.Fetch(ctx) })
+	}
+
+	return wg.Wait()
+}
+
+func (dh *DashboardHandler) maintain(ctx context.Context) {
+	logger := logging.FromContext(ctx).With("source", "dataMaintainer")
+
+	ticker := time.NewTicker(maintainencePeriod)
+
+	logger.Info("starting data maintainer", "interval", maintainencePeriod.String())
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+
+		case <-ticker.C:
+			logger.Info("updating dashboard data", "nextRun", time.Now().Add(maintainencePeriod))
+
+			err := dh.Update(ctx)
+			if err != nil {
+				logger.Error("failed to update dashboard handler; data may be stale", "err", err)
+				continue
+			}
+
+		}
+	}
+}
+
 func (dh *DashboardHandler) Update(ctx context.Context) error {
+	err := dh.fetchData(ctx)
+	if err != nil {
+		return err
+	}
+
 	dh.indexDataLock.Lock()
 	defer dh.indexDataLock.Unlock()
 
 	buf := &bytes.Buffer{}
 
 	data := struct {
-		LastUpdated string
-		Repos       []*github.GitHubRepo
+		LastUpdated  string
+		Repos        []*github.GitHubRepo
+		TestGridJobs []testgrid.Job
 	}{
-		LastUpdated: time.Now().UTC().Format(time.DateTime),
-		Repos:       targetList,
+		LastUpdated:  time.Now().UTC().Format(time.DateTime),
+		Repos:        dh.githubRepos,
+		TestGridJobs: []testgrid.Job{},
 	}
+
+	for _, dashboard := range dh.testgridDashboards {
+		data.TestGridJobs = append(data.TestGridJobs, dashboard.JobData()...)
+	}
+
+	slices.SortFunc(data.TestGridJobs, func(a, b testgrid.Job) int {
+		if a.DashboardName != b.DashboardName {
+			return strings.Compare(a.DashboardName, b.DashboardName)
+		}
+
+		return strings.Compare(a.Name, b.Name)
+	})
 
 	slices.SortFunc(data.Repos, func(a, b *github.GitHubRepo) int {
 		if !a.HasReleases && !b.HasReleases {
@@ -117,7 +229,7 @@ func (dh *DashboardHandler) Update(ctx context.Context) error {
 		return a.LastRelease.GetCreatedAt().Compare(b.LastRelease.GetCreatedAt().Time)
 	})
 
-	err := dh.indexTemplate.Execute(buf, data)
+	err = dh.indexTemplate.Execute(buf, data)
 	if err != nil {
 		return err
 	}
@@ -126,7 +238,7 @@ func (dh *DashboardHandler) Update(ctx context.Context) error {
 
 	var warnings []string
 
-	for _, repo := range targetList {
+	for _, repo := range dh.githubRepos {
 		_, warningMessage := repo.BootstrapWarnings()
 
 		if warningMessage != "" {
@@ -134,7 +246,7 @@ func (dh *DashboardHandler) Update(ctx context.Context) error {
 		}
 	}
 
-	if len(warnings) > 0 {
+	if len(warnings) > 0 && dh.shouldNtfy {
 		logger := logging.FromContext(ctx)
 
 		message := strings.Join(warnings, ", ")
@@ -166,64 +278,6 @@ func (dh *DashboardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(dh.indexData)
-}
-
-type repoFunc func(*github.GitHubRepo, context.Context, *githubsdk.Client) error
-
-func forEachRepo(ctx context.Context, client *githubsdk.Client, f repoFunc) error {
-	wg, ctx := errgroup.WithContext(ctx)
-
-	for _, repo := range targetList {
-		wg.Go(func() error {
-			return f(repo, ctx, client)
-		})
-	}
-
-	return wg.Wait()
-}
-
-func updateRepos(ctx context.Context, logger *slog.Logger, client *githubsdk.Client) error {
-	wg, ctx := errgroup.WithContext(ctx)
-
-	wg.Go(func() error {
-		return forEachRepo(ctx, client, (*github.GitHubRepo).GetLatestRelease)
-	})
-
-	wg.Go(func() error {
-		return forEachRepo(ctx, client, (*github.GitHubRepo).GetLatestRunResult)
-	})
-
-	return wg.Wait()
-}
-
-func maintainRepos(ctx context.Context, client *githubsdk.Client, dh *DashboardHandler) {
-	logger := logging.FromContext(ctx).With("source", "repoMaintainer")
-
-	ticker := time.NewTicker(maintainencePeriod)
-
-	logger.Info("starting repo maintainer", "interval", maintainencePeriod.String())
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-
-		case <-ticker.C:
-			logger.Info("updating repos", "nextRun", time.Now().Add(maintainencePeriod))
-			err := updateRepos(ctx, logger, client)
-			if err != nil {
-				logger.Error("failed to update repos; data may be stale", "err", err)
-				continue
-			}
-
-			err = dh.Update(ctx)
-			if err != nil {
-				logger.Error("failed to update dashboard handler; data may be stale", "err", err)
-				continue
-			}
-
-		}
-	}
 }
 
 func staticResourceHandler(w http.ResponseWriter, r *http.Request) {
@@ -287,9 +341,7 @@ func run(ctx context.Context) error {
 
 	logger := logging.FromContext(ctx)
 
-	config := struct {
-		GitHubToken string `json:"githubToken"`
-	}{}
+	config := &Config{}
 
 	configFile := "/etc/cert-manager-dashboard/config.json"
 
@@ -297,7 +349,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		token := os.Getenv("CERT_MANAGER_DASHBOARD_GITHUB_TOKEN")
 		if token == "" {
-			token := os.Getenv("GITHUB_TOKEN")
+			token = os.Getenv("GITHUB_TOKEN")
 			if token == "" {
 				return fmt.Errorf("no %s available and no CERT_MANAGER_DASHBOARD_GITHUB_TOKEN/GITHUB_TOKEN found in env", configFile)
 			}
@@ -311,28 +363,17 @@ func run(ctx context.Context) error {
 		}
 	}
 
-	if config.GitHubToken == "" {
-		return fmt.Errorf("no GitHub token available")
-	}
-
-	client := githubsdk.NewClient(&http.Client{Timeout: 5 * time.Second}).WithAuthToken(config.GitHubToken)
-
-	dashboardHandler, err := NewDashboardHandler()
+	dashboardHandler, err := NewDashboardHandler(config)
 	if err != nil {
 		return err
-	}
-
-	err = updateRepos(ctx, logger.With("source", "initialScan"), client)
-	if err != nil {
-		return fmt.Errorf("failed to complete initial sync for repo data: %s", err)
 	}
 
 	err = dashboardHandler.Update(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to complete initial sync for repo data: %s", err)
 	}
 
-	go maintainRepos(ctx, client, dashboardHandler)
+	go dashboardHandler.maintain(ctx)
 
 	mux := http.NewServeMux()
 
