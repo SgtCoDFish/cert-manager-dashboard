@@ -3,7 +3,7 @@ Description=cert-manager Dashboard
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/cert-manager-dashboard
+ExecStart=/usr/bin/cert-manager-dashboard -ntfy
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal

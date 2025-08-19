@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -371,6 +372,9 @@ func run(ctx context.Context) error {
 	logger := logging.FromContext(ctx)
 
 	config := &Config{}
+
+	flag.BoolVar(&config.ShouldNtfy, "ntfy", false, "If set, send warnings to ntfy.sh")
+	flag.Parse()
 
 	configFile := "/etc/cert-manager-dashboard/config.json"
 

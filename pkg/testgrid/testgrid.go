@@ -42,6 +42,8 @@ func (d *Dashboard) Fetch(ctx context.Context) error {
 		return err
 	}
 
+	var newJobData []Job
+
 	for _, jobName := range d.jobNames {
 		summary, ok := jobData[k8stestgrid.JobName(jobName)]
 		if !ok {
@@ -66,7 +68,7 @@ func (d *Dashboard) Fetch(ctx context.Context) error {
 			logger.Error("got an unexpected status for TestGrid job", "dashboard", d.Name, "job", jobName, "status", string(summary.OverallStatus))
 		}
 
-		d.jobData = append(d.jobData, Job{
+		newJobData = append(newJobData, Job{
 			Name:           jobName,
 			DashboardName:  d.Name,
 			Status:         string(summary.OverallStatus),
@@ -74,6 +76,8 @@ func (d *Dashboard) Fetch(ctx context.Context) error {
 			URL:            fmt.Sprintf("https://testgrid.k8s.io/%s#%s", d.Name, jobName),
 		})
 	}
+
+	d.jobData = newJobData
 
 	return nil
 }
