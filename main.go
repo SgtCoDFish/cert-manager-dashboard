@@ -298,6 +298,7 @@ func (dh *DashboardHandler) Update(ctx context.Context) error {
 
 func (dh *DashboardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
+
 	if path != "/" && path != "/index.html" && path != "/index.htm" {
 		http.NotFoundHandler().ServeHTTP(w, r)
 		return
@@ -305,6 +306,8 @@ func (dh *DashboardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	dh.indexDataLock.RLock()
 	defer dh.indexDataLock.RUnlock()
+
+	logging.FromContext(r.Context()).Info("request", "userAgent", r.UserAgent(), "path", path)
 
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(dh.indexData)
