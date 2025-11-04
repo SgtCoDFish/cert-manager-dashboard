@@ -91,7 +91,7 @@ func NewDashboardHandler(config *Config) (*DashboardHandler, error) {
 	repos := []*github.GitHubRepo{
 		github.NewGitHubRepo("cert-manager", "cert-manager", github.WithFriendlyName("master"), github.WithHasReleases(false)),
 		github.NewGitHubRepo("cert-manager", "cert-manager", github.WithFriendlyName("release-1.18"), github.WithVersionFilter(`v1\.18\.[0-9]+`), github.WithHasGovulncheck(false)),
-		github.NewGitHubRepo("cert-manager", "cert-manager", github.WithFriendlyName("release-1.17"), github.WithVersionFilter(`v1\.17\.[0-9]+`), github.WithHasGovulncheck(false)),
+		github.NewGitHubRepo("cert-manager", "cert-manager", github.WithFriendlyName("release-1.19"), github.WithVersionFilter(`v1\.19\.[0-9]+`), github.WithHasGovulncheck(false)),
 		github.NewGitHubRepo("cert-manager", "trust-manager"),
 		github.NewGitHubRepo("cert-manager", "approver-policy"),
 		github.NewGitHubRepo("cert-manager", "csi-driver"),
@@ -112,12 +112,12 @@ func NewDashboardHandler(config *Config) (*DashboardHandler, error) {
 			"ci-cert-manager-master-trivy-test-startupapicheck",
 			"ci-cert-manager-master-trivy-test-webhook",
 		}),
-		testgrid.New("cert-manager-periodics-release-1.17", []string{
-			"ci-cert-manager-release-1.17-trivy-test-acmesolver",
-			"ci-cert-manager-release-1.17-trivy-test-cainjector",
-			"ci-cert-manager-release-1.17-trivy-test-controller",
-			"ci-cert-manager-release-1.17-trivy-test-startupapicheck",
-			"ci-cert-manager-release-1.17-trivy-test-webhook",
+		testgrid.New("cert-manager-periodics-release-1.19", []string{
+			"ci-cert-manager-release-1.19-trivy-test-acmesolver",
+			"ci-cert-manager-release-1.19-trivy-test-cainjector",
+			"ci-cert-manager-release-1.19-trivy-test-controller",
+			"ci-cert-manager-release-1.19-trivy-test-startupapicheck",
+			"ci-cert-manager-release-1.19-trivy-test-webhook",
 		}),
 		testgrid.New("cert-manager-periodics-release-1.18", []string{
 			"ci-cert-manager-release-1.18-trivy-test-acmesolver",
