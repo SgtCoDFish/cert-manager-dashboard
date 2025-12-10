@@ -17,7 +17,12 @@ type Job struct {
 }
 
 func (j Job) Failing() bool {
-	return j.Status != string(k8stestgrid.Passing)
+	// testgrid will report tests as flaky if they failed recently; our security tests
+	// run on an irregular basis so a failure a couple of days ago can cause the tests
+	// to be marked as flaky even if they are currently passing.
+	// As such, we assume jobs to be failing only if they are explicitly marked as failing
+	// or stale, but we still colour flaky tests as "warning"s in the UI.
+	return j.Status == string(k8stestgrid.Failing) || j.Status == string(k8stestgrid.Stale)
 }
 
 type Dashboard struct {
@@ -57,6 +62,8 @@ func (d *Dashboard) Fetch(ctx context.Context) error {
 			bootstrapClass = "danger"
 
 		case k8stestgrid.Stale:
+			bootstrapClass = "danger"
+
 		case k8stestgrid.Flaky:
 			bootstrapClass = "warning"
 

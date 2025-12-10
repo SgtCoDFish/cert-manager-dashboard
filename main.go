@@ -260,7 +260,7 @@ func (dh *DashboardHandler) Update(ctx context.Context) error {
 	for _, repo := range dh.githubRepos {
 		warningType, warningMessage := repo.BootstrapWarnings()
 
-		// TODO: this is error prone and could be much better handled
+		// TODO: this is error prone and could be much better handled; the bootstrap class shouldn't be tied to how we evaluate warnings
 		if warningMessage != "" {
 			switch warningType {
 			case "danger":
@@ -283,12 +283,15 @@ func (dh *DashboardHandler) Update(ctx context.Context) error {
 		warnings = append(warnings, fmt.Sprintf("trivy jobs: %d failing", failingTrivyJobCount))
 	}
 
+	logger := logging.FromContext(ctx)
+
 	if otherWarnings > 0 {
-		warnings = append(warnings, fmt.Sprintf("other: %d minor warnings", otherWarnings))
+		logger.Info("skipping minor warnings", "otherWarningsCount", otherWarnings)
+		// Previously we sent a message for minor warnings, but it was too noisy on ntfy
+		// warnings = append(warnings, fmt.Sprintf("other: %d minor warnings", otherWarnings))
 	}
 
 	if len(warnings) > 0 {
-		logger := logging.FromContext(ctx)
 		message := strings.Join(warnings, ", ")
 
 		logger.Info("got warnings", "warnings", message, "shouldNtfy", dh.shouldNtfy)
