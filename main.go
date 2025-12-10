@@ -63,7 +63,7 @@ type DashboardHandler struct {
 	indexDataLock sync.RWMutex
 
 	githubClient *githubsdk.Client
-	githubRepos  []*github.GitHubRepo
+	githubRepos  []*github.Repo
 
 	testgridDashboards []*testgrid.Dashboard
 
@@ -88,20 +88,20 @@ func NewDashboardHandler(config *Config) (*DashboardHandler, error) {
 		return nil, err
 	}
 
-	repos := []*github.GitHubRepo{
-		github.NewGitHubRepo("cert-manager", "cert-manager", github.WithFriendlyName("master"), github.WithHasReleases(false)),
-		github.NewGitHubRepo("cert-manager", "cert-manager", github.WithFriendlyName("release-1.18"), github.WithVersionFilter(`v1\.18\.[0-9]+`), github.WithHasGovulncheck(false)),
-		github.NewGitHubRepo("cert-manager", "cert-manager", github.WithFriendlyName("release-1.19"), github.WithVersionFilter(`v1\.19\.[0-9]+`), github.WithHasGovulncheck(false)),
-		github.NewGitHubRepo("cert-manager", "trust-manager"),
-		github.NewGitHubRepo("cert-manager", "approver-policy"),
-		github.NewGitHubRepo("cert-manager", "csi-driver"),
-		github.NewGitHubRepo("cert-manager", "csi-driver-spiffe"),
-		github.NewGitHubRepo("cert-manager", "istio-csr"),
-		github.NewGitHubRepo("cert-manager", "cmctl"),
-		github.NewGitHubRepo("cert-manager", "google-cas-issuer"),
-		github.NewGitHubRepo("cert-manager", "openshift-routes"),
-		github.NewGitHubRepo("cert-manager", "issuer-lib", github.WithHasReleases(false)),
-		github.NewGitHubRepo("cert-manager", "csi-lib", github.WithHasReleases(false)),
+	supportedCertManagerMinorVersions := []string{"18", "19"}
+
+	repos := []*github.Repo{
+		github.NewRepo("cert-manager", "cert-manager", github.WithFriendlyName("master"), github.WithHasReleases(false), github.WithGovulncheckBranch("master")),
+		github.NewRepo("cert-manager", "trust-manager"),
+		github.NewRepo("cert-manager", "approver-policy"),
+		github.NewRepo("cert-manager", "csi-driver"),
+		github.NewRepo("cert-manager", "csi-driver-spiffe"),
+		github.NewRepo("cert-manager", "istio-csr"),
+		github.NewRepo("cert-manager", "cmctl"),
+		github.NewRepo("cert-manager", "google-cas-issuer"),
+		github.NewRepo("cert-manager", "openshift-routes"),
+		github.NewRepo("cert-manager", "issuer-lib", github.WithHasReleases(false)),
+		github.NewRepo("cert-manager", "csi-lib", github.WithHasReleases(false)),
 	}
 
 	testgridDashboards := []*testgrid.Dashboard{
@@ -112,20 +112,35 @@ func NewDashboardHandler(config *Config) (*DashboardHandler, error) {
 			"ci-cert-manager-master-trivy-test-startupapicheck",
 			"ci-cert-manager-master-trivy-test-webhook",
 		}),
-		testgrid.New("cert-manager-periodics-release-1.19", []string{
-			"ci-cert-manager-release-1.19-trivy-test-acmesolver",
-			"ci-cert-manager-release-1.19-trivy-test-cainjector",
-			"ci-cert-manager-release-1.19-trivy-test-controller",
-			"ci-cert-manager-release-1.19-trivy-test-startupapicheck",
-			"ci-cert-manager-release-1.19-trivy-test-webhook",
-		}),
-		testgrid.New("cert-manager-periodics-release-1.18", []string{
-			"ci-cert-manager-release-1.18-trivy-test-acmesolver",
-			"ci-cert-manager-release-1.18-trivy-test-cainjector",
-			"ci-cert-manager-release-1.18-trivy-test-controller",
-			"ci-cert-manager-release-1.18-trivy-test-startupapicheck",
-			"ci-cert-manager-release-1.18-trivy-test-webhook",
-		}),
+	}
+
+	for _, minor := range supportedCertManagerMinorVersions {
+		branch := fmt.Sprintf("release-1.%s", minor)
+		versionFilter := fmt.Sprintf(`v1\.%s\.[0-9]+`, minor)
+
+		repos = append(
+			repos,
+			github.NewRepo(
+				"cert-manager", "cert-manager",
+				github.WithFriendlyName(branch),
+				github.WithVersionFilter(versionFilter),
+				github.WithHasGovulncheck(false),
+			),
+		)
+
+		testgridDashboards = append(
+			testgridDashboards,
+			testgrid.New(
+				fmt.Sprintf("cert-manager-periodics-release-1.%s", minor),
+				[]string{
+					fmt.Sprintf("ci-cert-manager-release-1.%s-trivy-test-acmesolver", minor),
+					fmt.Sprintf("ci-cert-manager-release-1.%s-trivy-test-cainjector", minor),
+					fmt.Sprintf("ci-cert-manager-release-1.%s-trivy-test-controller", minor),
+					fmt.Sprintf("ci-cert-manager-release-1.%s-trivy-test-startupapicheck", minor),
+					fmt.Sprintf("ci-cert-manager-release-1.%s-trivy-test-webhook", minor),
+				},
+			),
+		)
 	}
 
 	return &DashboardHandler{
@@ -196,7 +211,7 @@ func (dh *DashboardHandler) Update(ctx context.Context) error {
 
 	data := struct {
 		LastUpdated  string
-		Repos        []*github.GitHubRepo
+		Repos        []*github.Repo
 		TestGridJobs []testgrid.Job
 	}{
 		LastUpdated:  time.Now().UTC().Format(time.DateTime),
@@ -216,7 +231,7 @@ func (dh *DashboardHandler) Update(ctx context.Context) error {
 		return strings.Compare(a.Name, b.Name)
 	})
 
-	slices.SortFunc(data.Repos, func(a, b *github.GitHubRepo) int {
+	slices.SortFunc(data.Repos, func(a, b *github.Repo) int {
 		if !a.HasReleases && !b.HasReleases {
 			return 0
 		}

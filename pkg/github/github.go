@@ -24,33 +24,39 @@ var (
 	latestReleaseTmpl = template.Must(template.New("latestReleaseTmpl").Parse(`<a href="{{ .LastRelease.GetHTMLURL }}" title="Latest release for {{ .RepoName }}" target="_blank">{{ .LastRelease.GetTagName }}</a>`))
 )
 
-type GitHubRepoOption func(*GitHubRepo)
+type RepoOption func(*Repo)
 
-func WithHasReleases(hasReleases bool) GitHubRepoOption {
-	return func(t *GitHubRepo) {
+func WithHasReleases(hasReleases bool) RepoOption {
+	return func(t *Repo) {
 		t.HasReleases = hasReleases
 	}
 }
 
-func WithVersionFilter(versionFilter string) GitHubRepoOption {
-	return func(t *GitHubRepo) {
+func WithVersionFilter(versionFilter string) RepoOption {
+	return func(t *Repo) {
 		t.VersionFilter = versionFilter
 	}
 }
 
-func WithFriendlyName(name string) GitHubRepoOption {
-	return func(t *GitHubRepo) {
+func WithFriendlyName(name string) RepoOption {
+	return func(t *Repo) {
 		t.FriendlyName = name
 	}
 }
 
-func WithHasGovulncheck(hasGovulncheck bool) GitHubRepoOption {
-	return func(t *GitHubRepo) {
+func WithHasGovulncheck(hasGovulncheck bool) RepoOption {
+	return func(t *Repo) {
 		t.HasGovulncheck = hasGovulncheck
 	}
 }
 
-type GitHubRepo struct {
+func WithGovulncheckBranch(branch string) RepoOption {
+	return func(t *Repo) {
+		t.GovulncheckBranch = branch
+	}
+}
+
+type Repo struct {
 	OrgName  string
 	RepoName string
 
@@ -60,6 +66,7 @@ type GitHubRepo struct {
 	HasReleases    bool
 
 	GovulncheckWorkflowName string
+	GovulncheckBranch       string
 
 	LastRun *githubsdk.WorkflowRun
 
@@ -68,8 +75,8 @@ type GitHubRepo struct {
 	VersionFilter string
 }
 
-func NewGitHubRepo(org string, name string, configurers ...GitHubRepoOption) *GitHubRepo {
-	t := &GitHubRepo{
+func NewRepo(org string, name string, configurers ...RepoOption) *Repo {
+	t := &Repo{
 		OrgName:  org,
 		RepoName: name,
 
@@ -77,6 +84,7 @@ func NewGitHubRepo(org string, name string, configurers ...GitHubRepoOption) *Gi
 		HasReleases:    true,
 
 		GovulncheckWorkflowName: "govulncheck.yaml",
+		GovulncheckBranch:       "main",
 	}
 
 	for _, c := range configurers {
@@ -86,7 +94,7 @@ func NewGitHubRepo(org string, name string, configurers ...GitHubRepoOption) *Gi
 	return t
 }
 
-func (tr *GitHubRepo) String() string {
+func (tr *Repo) String() string {
 	suffix := ""
 
 	if tr.FriendlyName != "" {
@@ -96,17 +104,17 @@ func (tr *GitHubRepo) String() string {
 	return fmt.Sprintf("%s/%s%s", tr.OrgName, tr.RepoName, suffix)
 }
 
-func (tr *GitHubRepo) BootstrapClass() string {
+func (tr *Repo) BootstrapClass() string {
 	cls, _ := tr.BootstrapWarnings()
 	return cls
 }
 
-func (tr *GitHubRepo) WarningMessage() string {
+func (tr *Repo) WarningMessage() string {
 	_, wrn := tr.BootstrapWarnings()
 	return wrn
 }
 
-func (tr *GitHubRepo) LastTag() string {
+func (tr *Repo) LastTag() string {
 	if !tr.HasReleases || tr.LastRelease == nil {
 		return "N/A"
 	}
@@ -114,7 +122,7 @@ func (tr *GitHubRepo) LastTag() string {
 	return tr.LastRelease.GetTagName()
 }
 
-func (tr *GitHubRepo) LastReleaseTime() string {
+func (tr *Repo) LastReleaseTime() string {
 	if !tr.HasReleases || tr.LastRelease == nil {
 		return "N/A"
 	}
@@ -122,7 +130,7 @@ func (tr *GitHubRepo) LastReleaseTime() string {
 	return tr.LastRelease.GetCreatedAt().Time.UTC().Format(time.DateOnly)
 }
 
-func (tr *GitHubRepo) LastGovulncheckTime() string {
+func (tr *Repo) LastGovulncheckTime() string {
 	if !tr.HasGovulncheck || tr.LastRun == nil {
 		return "N/A"
 	}
@@ -130,7 +138,7 @@ func (tr *GitHubRepo) LastGovulncheckTime() string {
 	return tr.LastRun.GetCreatedAt().Time.UTC().Format(time.DateTime)
 }
 
-func (tr *GitHubRepo) GovulncheckHead() template.HTML {
+func (tr *Repo) GovulncheckHead() template.HTML {
 	if !tr.HasGovulncheck {
 		return "N/A"
 	}
@@ -150,7 +158,7 @@ func (tr *GitHubRepo) GovulncheckHead() template.HTML {
 	return template.HTML(buf.String())
 }
 
-func (tr *GitHubRepo) LatestReleaseLink() template.HTML {
+func (tr *Repo) LatestReleaseLink() template.HTML {
 	if !tr.HasReleases {
 		return "N/A"
 	}
@@ -174,7 +182,7 @@ func (tr *GitHubRepo) LatestReleaseLink() template.HTML {
 // warnings which should be shown for this repo. Can return empty strings
 // if no warnings are needed.
 // [1] https://getbootstrap.com/docs/3.4/css/#tables-contextual-classes
-func (tr *GitHubRepo) BootstrapWarnings() (string, string) {
+func (tr *Repo) BootstrapWarnings() (string, string) {
 	if tr.HasGovulncheck {
 		if tr.LastRun == nil {
 			return "danger", "no data for last govulncheck run"
@@ -200,7 +208,7 @@ func (tr *GitHubRepo) BootstrapWarnings() (string, string) {
 	return "", ""
 }
 
-func (repo *GitHubRepo) GetLatestRunResult(ctx context.Context, client *githubsdk.Client) error {
+func (repo *Repo) GetLatestRunResult(ctx context.Context, client *githubsdk.Client) error {
 	if !repo.HasGovulncheck {
 		return nil
 	}
@@ -210,6 +218,7 @@ func (repo *GitHubRepo) GetLatestRunResult(ctx context.Context, client *githubsd
 		ListOptions: githubsdk.ListOptions{
 			PerPage: 25,
 		},
+		Branch: repo.GovulncheckBranch,
 	}
 
 	runs, _, err := client.Actions.ListWorkflowRunsByFileName(ctx, repo.OrgName, repo.RepoName, repo.GovulncheckWorkflowName, listOpts)
@@ -229,7 +238,7 @@ func (repo *GitHubRepo) GetLatestRunResult(ctx context.Context, client *githubsd
 	return nil
 }
 
-func (repo *GitHubRepo) GetLatestRelease(ctx context.Context, client *githubsdk.Client) error {
+func (repo *Repo) GetLatestRelease(ctx context.Context, client *githubsdk.Client) error {
 	if !repo.HasReleases {
 		return nil
 	}
