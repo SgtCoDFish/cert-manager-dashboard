@@ -19,8 +19,6 @@ const (
 )
 
 var (
-	lastRunTmpl = template.Must(template.New("lastRunTmpl").Parse(`<a href="{{ .LastRun.GetHTMLURL }}" title="Latest run of govulncheck for {{ .RepoName }}" target="_blank">{{ .LastRun.GetHeadBranch }}</a>`))
-
 	latestReleaseTmpl = template.Must(template.New("latestReleaseTmpl").Parse(`<a href="{{ .LastRelease.GetHTMLURL }}" title="Latest release for {{ .RepoName }}" target="_blank">{{ .LastRelease.GetTagName }}</a>`))
 )
 
@@ -44,15 +42,20 @@ func WithFriendlyName(name string) RepoOption {
 	}
 }
 
-func WithHasGovulncheck(hasGovulncheck bool) RepoOption {
+func WithActionsBranch(branch string) RepoOption {
 	return func(t *Repo) {
-		t.HasGovulncheck = hasGovulncheck
+		t.ActionsBranch = branch
 	}
 }
 
 func WithGovulncheckBranch(branch string) RepoOption {
+	return WithActionsBranch(branch)
+}
+
+func WithActions(actions ...*Action) RepoOption {
 	return func(t *Repo) {
-		t.GovulncheckBranch = branch
+		t.Actions = actions
+		t.HasGovulncheck = len(actions) > 0
 	}
 }
 
@@ -65,14 +68,13 @@ type Repo struct {
 	HasGovulncheck bool
 	HasReleases    bool
 
-	GovulncheckWorkflowName string
-	GovulncheckBranch       string
-
-	LastRun *githubsdk.WorkflowRun
+	ActionsBranch string
 
 	LastRelease *githubsdk.RepositoryRelease
 
 	VersionFilter string
+
+	Actions []*Action
 }
 
 func NewRepo(org string, name string, configurers ...RepoOption) *Repo {
@@ -80,11 +82,10 @@ func NewRepo(org string, name string, configurers ...RepoOption) *Repo {
 		OrgName:  org,
 		RepoName: name,
 
-		HasGovulncheck: true,
+		HasGovulncheck: false,
 		HasReleases:    true,
 
-		GovulncheckWorkflowName: "govulncheck.yaml",
-		GovulncheckBranch:       "main",
+		ActionsBranch: "main",
 	}
 
 	for _, c := range configurers {
@@ -130,34 +131,6 @@ func (tr *Repo) LastReleaseTime() string {
 	return tr.LastRelease.GetCreatedAt().Time.UTC().Format(time.DateOnly)
 }
 
-func (tr *Repo) LastGovulncheckTime() string {
-	if !tr.HasGovulncheck || tr.LastRun == nil {
-		return "N/A"
-	}
-
-	return tr.LastRun.GetCreatedAt().Time.UTC().Format(time.DateTime)
-}
-
-func (tr *Repo) GovulncheckHead() template.HTML {
-	if !tr.HasGovulncheck {
-		return "N/A"
-	}
-
-	if tr.LastRun == nil {
-		return "No runs found"
-	}
-
-	buf := &bytes.Buffer{}
-
-	err := lastRunTmpl.Execute(buf, tr)
-	if err != nil {
-		return "Failed to render template"
-	}
-
-	// NB: template.HTML can be dangerous, but this is safe since this is output from "template/html.Template.Execute"
-	return template.HTML(buf.String())
-}
-
 func (tr *Repo) LatestReleaseLink() template.HTML {
 	if !tr.HasReleases {
 		return "N/A"
@@ -179,20 +152,10 @@ func (tr *Repo) LatestReleaseLink() template.HTML {
 }
 
 // BootstrapWarnings returns a bootstrap class[1] and a reason if there are any
-// warnings which should be shown for this repo. Can return empty strings
+// warnings which should be shown for this repo's releases. Can return empty strings
 // if no warnings are needed.
 // [1] https://getbootstrap.com/docs/3.4/css/#tables-contextual-classes
 func (tr *Repo) BootstrapWarnings() (string, string) {
-	if tr.HasGovulncheck {
-		if tr.LastRun == nil {
-			return "danger", "no data for last govulncheck run"
-		} else if tr.LastRun.GetConclusion() != "success" {
-			return "danger", "last govulncheck run not successful"
-		} else if time.Since(tr.LastRun.GetCreatedAt().Time).Hours() > twoDays {
-			return "danger", "govulncheck stale for more than two days"
-		}
-	}
-
 	if tr.HasReleases {
 		if tr.LastRelease == nil {
 			return "danger", "no data for last release"
@@ -209,30 +172,32 @@ func (tr *Repo) BootstrapWarnings() (string, string) {
 }
 
 func (repo *Repo) GetLatestRunResult(ctx context.Context, client *githubsdk.Client) error {
-	if !repo.HasGovulncheck {
+	if len(repo.Actions) == 0 {
 		return nil
 	}
 
-	listOpts := &githubsdk.ListWorkflowRunsOptions{
-		Created: lastWeek(),
-		ListOptions: githubsdk.ListOptions{
-			PerPage: 25,
-		},
-		Branch: repo.GovulncheckBranch,
-	}
-
-	runs, _, err := client.Actions.ListWorkflowRunsByFileName(ctx, repo.OrgName, repo.RepoName, repo.GovulncheckWorkflowName, listOpts)
-	if err != nil {
-		return err
-	}
-
-	for _, run := range runs.WorkflowRuns {
-		if run.GetStatus() != "completed" {
-			continue
+	for _, action := range repo.Actions {
+		listOpts := &githubsdk.ListWorkflowRunsOptions{
+			Created: lastWeek(),
+			ListOptions: githubsdk.ListOptions{
+				PerPage: 25,
+			},
+			Branch: repo.ActionsBranch,
 		}
 
-		repo.LastRun = run
-		break
+		runs, _, err := client.Actions.ListWorkflowRunsByFileName(ctx, repo.OrgName, repo.RepoName, action.WorkflowName, listOpts)
+		if err != nil {
+			return err
+		}
+
+		for _, run := range runs.WorkflowRuns {
+			if run.GetStatus() != "completed" {
+				continue
+			}
+
+			action.LastRun = run
+			break
+		}
 	}
 
 	return nil

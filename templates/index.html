@@ -16,12 +16,6 @@
 			</div>
 
 			<div class="row">
-				<div class="col-xs-12">
-					<h3>GitHub Releases and Govulncheck Actions</h3>
-				</div>
-			</div>
-
-			<div class="row">
 				<div class="col-xs-6">
 					<p>Last updated: {{ .LastUpdated }}</p>
 				</div>
@@ -32,25 +26,22 @@
 
 			<div class="row">
 				<div class="col-xs-12">
+					<h3>GitHub Releases</h3>
+				</div>
+			</div>
+
+			<div class="row">
+				<div class="col-xs-12">
 					<table class="table table-striped">
 						<tr>
 							<th>Repo</th>
 							<th>Tag</th>
 							<th>Date</th>
-							<th>Status</th>
-							<th>Last Run</th>
-							<th>Head</th>
 							<th>Warnings</th>
 						</tr>
 
-						<tr>
-							<th></th>
-							<th colspan="2">Last Release</th>
-							<th colspan="3">Govulncheck Status</th>
-							<th></th>
-						</tr>
-
 						{{ range $repo := .Repos }}
+						{{ if $repo.HasReleases }}
 						<tr class="{{ $repo.BootstrapClass }}">
 							<td>
 								<a href="https://github.com/{{- $repo.OrgName -}}/{{- $repo.RepoName -}}" target="_blank">
@@ -59,10 +50,44 @@
 							</td>
 							<td>{{ $repo.LatestReleaseLink }}</td>
 							<td>{{ $repo.LastReleaseTime }}</td>
-							<td>{{ $repo.LastRun.GetConclusion }}</td>
-							<td>{{ $repo.LastGovulncheckTime }}</td>
-							<td>{{ $repo.GovulncheckHead }} </td>
 							<td>{{ $repo.WarningMessage }}</td>
+						</tr>
+						{{ end }}
+						{{ end }}
+					</table>
+				</div>
+			</div>
+
+			<div class="row">
+				<div class="col-xs-12">
+					<h3>GitHub Actions</h3>
+				</div>
+			</div>
+
+			<div class="row">
+				<div class="col-xs-12">
+					<table class="table table-striped">
+						<tr>
+							<th>Repo</th>
+							<th>Workflow Name</th>
+							<th>Last Run</th>
+							<th>Status</th>
+							<th>Head</th>
+							<th>Warnings</th>
+						</tr>
+
+						{{ range $row := .ActionRows }}
+						<tr class="{{ $row.BootstrapClass }}">
+							<td>
+								<a href="https://github.com/{{- $row.Repo.OrgName -}}/{{- $row.Repo.RepoName -}}" target="_blank">
+									{{ $row.Repo.String }}
+								</a>
+							</td>
+							<td>{{ $row.Action.Name }}</td>
+							<td>{{ $row.Action.LastRunTime }}</td>
+							<td>{{ $row.Action.Status }}</td>
+							<td>{{ $row.Action.HeadLink $row.Repo }}</td>
+							<td>{{ $row.WarningMessage }}</td>
 						</tr>
 						{{ end }}
 					</table>
