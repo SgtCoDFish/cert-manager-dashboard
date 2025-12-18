@@ -56,6 +56,13 @@ type Config struct {
 	ShouldNtfy bool `json:"shouldNtfy"`
 }
 
+type ActionRow struct {
+	Repo           *github.Repo
+	Action         *github.Action
+	BootstrapClass string
+	WarningMessage string
+}
+
 type DashboardHandler struct {
 	indexTemplate *template.Template
 
@@ -91,17 +98,67 @@ func NewDashboardHandler(config *Config) (*DashboardHandler, error) {
 	supportedCertManagerMinorVersions := []string{"18", "19"}
 
 	repos := []*github.Repo{
-		github.NewRepo("cert-manager", "cert-manager", github.WithFriendlyName("master"), github.WithHasReleases(false), github.WithGovulncheckBranch("master")),
-		github.NewRepo("cert-manager", "trust-manager"),
-		github.NewRepo("cert-manager", "approver-policy"),
-		github.NewRepo("cert-manager", "csi-driver"),
-		github.NewRepo("cert-manager", "csi-driver-spiffe"),
-		github.NewRepo("cert-manager", "istio-csr"),
-		github.NewRepo("cert-manager", "cmctl"),
-		github.NewRepo("cert-manager", "google-cas-issuer"),
-		github.NewRepo("cert-manager", "openshift-routes"),
-		github.NewRepo("cert-manager", "issuer-lib", github.WithHasReleases(false)),
-		github.NewRepo("cert-manager", "csi-lib", github.WithHasReleases(false)),
+		github.NewRepo("cert-manager", "cert-manager",
+			github.WithFriendlyName("master"),
+			github.WithHasReleases(false),
+			github.WithGovulncheckBranch("master"),
+			github.WithActions(
+				github.NewAction("govulncheck", "govulncheck.yaml"),
+			),
+		),
+		github.NewRepo("cert-manager", "trust-manager",
+			github.WithActions(
+				github.NewAction("govulncheck", "govulncheck.yaml"),
+				github.NewAction("trust-package-security-scan", "trust-package-security-scan.yaml"),
+			),
+		),
+		github.NewRepo("cert-manager", "approver-policy",
+			github.WithActions(
+				github.NewAction("govulncheck", "govulncheck.yaml"),
+			),
+		),
+		github.NewRepo("cert-manager", "csi-driver",
+			github.WithActions(
+				github.NewAction("govulncheck", "govulncheck.yaml"),
+			),
+		),
+		github.NewRepo("cert-manager", "csi-driver-spiffe",
+			github.WithActions(
+				github.NewAction("govulncheck", "govulncheck.yaml"),
+			),
+		),
+		github.NewRepo("cert-manager", "istio-csr",
+			github.WithActions(
+				github.NewAction("govulncheck", "govulncheck.yaml"),
+			),
+		),
+		github.NewRepo("cert-manager", "cmctl",
+			github.WithActions(
+				github.NewAction("govulncheck", "govulncheck.yaml"),
+			),
+		),
+		github.NewRepo("cert-manager", "google-cas-issuer",
+			github.WithActions(
+				github.NewAction("govulncheck", "govulncheck.yaml"),
+			),
+		),
+		github.NewRepo("cert-manager", "openshift-routes",
+			github.WithActions(
+				github.NewAction("govulncheck", "govulncheck.yaml"),
+			),
+		),
+		github.NewRepo("cert-manager", "issuer-lib",
+			github.WithHasReleases(false),
+			github.WithActions(
+				github.NewAction("govulncheck", "govulncheck.yaml"),
+			),
+		),
+		github.NewRepo("cert-manager", "csi-lib",
+			github.WithHasReleases(false),
+			github.WithActions(
+				github.NewAction("govulncheck", "govulncheck.yaml"),
+			),
+		),
 	}
 
 	testgridDashboards := []*testgrid.Dashboard{
@@ -124,7 +181,6 @@ func NewDashboardHandler(config *Config) (*DashboardHandler, error) {
 				"cert-manager", "cert-manager",
 				github.WithFriendlyName(branch),
 				github.WithVersionFilter(versionFilter),
-				github.WithHasGovulncheck(false),
 			),
 		)
 
@@ -212,11 +268,32 @@ func (dh *DashboardHandler) Update(ctx context.Context) error {
 	data := struct {
 		LastUpdated  string
 		Repos        []*github.Repo
+		ActionRows   []ActionRow
 		TestGridJobs []testgrid.Job
 	}{
 		LastUpdated:  time.Now().UTC().Format(time.DateTime),
 		Repos:        dh.githubRepos,
+		ActionRows:   []ActionRow{},
 		TestGridJobs: []testgrid.Job{},
+	}
+
+	// Create ActionRows from repos and their actions
+	for _, repo := range dh.githubRepos {
+		if len(repo.Actions) == 0 {
+			continue
+		}
+
+		for _, action := range repo.Actions {
+			// Calculate warnings for this specific action
+			bootstrapClass, warningMessage := action.Warnings()
+
+			data.ActionRows = append(data.ActionRows, ActionRow{
+				Repo:           repo,
+				Action:         action,
+				BootstrapClass: bootstrapClass,
+				WarningMessage: warningMessage,
+			})
+		}
 	}
 
 	for _, dashboard := range dh.testgridDashboards {
@@ -257,18 +334,30 @@ func (dh *DashboardHandler) Update(ctx context.Context) error {
 	otherWarnings := 0
 	var warnings []string
 
-	for _, repo := range dh.githubRepos {
-		warningType, warningMessage := repo.BootstrapWarnings()
-
-		// TODO: this is error prone and could be much better handled; the bootstrap class shouldn't be tied to how we evaluate warnings
-		if warningMessage != "" {
-			switch warningType {
-			case "danger":
-				warnings = append(warnings, fmt.Sprintf("%s: %s", repo.RepoName, warningMessage))
-
-			default:
+	// Check ActionRows for action-related warnings
+	for _, actionRow := range data.ActionRows {
+		if actionRow.WarningMessage != "" {
+			if actionRow.BootstrapClass == "danger" {
+				warnings = append(warnings, fmt.Sprintf("%s/%s (%s): %s",
+					actionRow.Repo.OrgName, actionRow.Repo.RepoName, actionRow.Action.Name, actionRow.WarningMessage))
+			} else {
 				otherWarnings++
 			}
+		}
+	}
+
+	// Check repos for release-related warnings
+	for _, repo := range dh.githubRepos {
+		if !repo.HasReleases {
+			continue
+		}
+
+		if repo.LastRelease == nil {
+			warnings = append(warnings, fmt.Sprintf("%s: no data for last release", repo.RepoName))
+		} else if time.Since(repo.LastRelease.GetCreatedAt().Time).Hours() > 2*24*30 { // 60 days
+			warnings = append(warnings, fmt.Sprintf("%s: last release more than sixty days old", repo.RepoName))
+		} else if time.Since(repo.LastRelease.GetCreatedAt().Time).Hours() > 24*30 { // 30 days
+			otherWarnings++
 		}
 	}
 
