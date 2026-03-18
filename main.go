@@ -95,7 +95,7 @@ func NewDashboardHandler(config *Config) (*DashboardHandler, error) {
 		return nil, err
 	}
 
-	supportedCertManagerMinorVersions := []string{"18", "19"}
+	supportedCertManagerMinorVersions := []string{"19", "20"}
 
 	repos := []*github.Repo{
 		github.NewRepo("cert-manager", "cert-manager",
