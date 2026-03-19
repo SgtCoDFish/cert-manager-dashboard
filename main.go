@@ -159,6 +159,13 @@ func NewDashboardHandler(config *Config) (*DashboardHandler, error) {
 				github.NewAction("govulncheck", "govulncheck.yaml"),
 			),
 		),
+		github.NewRepo("cert-manager", "base-images",
+			github.WithHasReleases(false),
+			github.WithActions(
+				github.NewAction("base-static", "base-static.yml"),
+				github.NewAction("base-static-csi", "base-static-csi.yml"),
+			),
+		),
 	}
 
 	testgridDashboards := []*testgrid.Dashboard{
