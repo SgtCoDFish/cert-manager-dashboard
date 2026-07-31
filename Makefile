@@ -9,7 +9,7 @@ BINDIR := _bin
 GOOS := $(shell go env GOOS)
 GOARCH := $(shell go env GOARCH)
 
-DASHBOARD_VERSION=0.8.0
+DASHBOARD_VERSION=0.9.0
 
 GOLANGCILINT_VERSION=2.4.0
 NFPM_VERSION=v2.43.0
@@ -27,7 +27,7 @@ lint: $(BINDIR)/tools/golangci-lint-$(GOLANGCILINT_VERSION)
 build: $(BINDIR)/cert-manager-dashboard
 
 .PHONY: build-all
-build-all: $(BINDIR)/cert-manager-dashboard $(BINDIR)/cert-manager-dashboard-linux-amd64 $(BINDIR)/cert-managerdashboard-linux-arm64
+build-all: $(BINDIR)/cert-manager-dashboard $(BINDIR)/cert-manager-dashboard-linux-amd64 $(BINDIR)/cert-manager-dashboard-linux-arm64
 
 $(BINDIR)/cert-manager-dashboard: $(GOLIST) | $(BINDIR)
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags '-extldflags "-static"' -o $@ main.go
